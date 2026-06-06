@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   Row,
   Col,
@@ -8,7 +8,6 @@ import {
   Button,
   Tabs,
   Table,
-  List,
   Progress,
   Avatar,
   Badge,
@@ -16,6 +15,7 @@ import {
   Typography,
   Statistic,
   Divider,
+  Spin,
 } from 'antd'
 import {
   ArrowLeftOutlined,
@@ -30,12 +30,7 @@ import {
 import { useParams, useNavigate } from 'react-router-dom'
 import ReactECharts from 'echarts-for-react'
 import dayjs from 'dayjs'
-import {
-  mockVehicles,
-  generateTrackPoints,
-  generateTankParams,
-  mockViolations,
-} from '@/data/mock'
+import { vehiclesApi } from '@/api/client'
 import type { ColumnsType } from 'antd/es/table'
 import type { TrackPoint, TankParamPoint, ViolationRecord, Vehicle } from '@/types'
 
@@ -44,18 +39,37 @@ const { Title, Text } = Typography
 const VehicleDetail = () => {
   const { id } = useParams()
   const navigate = useNavigate()
-  const vehicle = mockVehicles.find(v => v.id === id) || mockVehicles[0]
+  const [loading, setLoading] = useState(false)
+  const [vehicle, setVehicle] = useState<Vehicle | null>(null)
+  const [trackPoints, setTrackPoints] = useState<TrackPoint[]>([])
+  const [tankParams, setTankParams] = useState<TankParamPoint[]>([])
+  const [vehicleViolations, setVehicleViolations] = useState<ViolationRecord[]>([])
 
-  const trackPoints = useMemo<TrackPoint[]>(() => generateTrackPoints(id || ''), [id])
-  const tankParams = useMemo<TankParamPoint[]>(() => generateTankParams(id || ''), [id])
-  const vehicleViolations = useMemo<ViolationRecord[]>(
-    () => mockViolations.filter(v => v.vehicleId === id).slice(0, 15),
-    [id],
-  )
+  const fetchDetail = async () => {
+    if (!id) return
+    setLoading(true)
+    try {
+      const response = await vehiclesApi.detail(id)
+      setVehicle(response.vehicle)
+      setTrackPoints(response.trackPoints)
+      setTankParams(response.tankParams)
+      setVehicleViolations(response.violations)
+    } catch (error) {
+      console.error('Failed to fetch vehicle detail:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchDetail()
+    const interval = setInterval(fetchDetail, 5000)
+    return () => clearInterval(interval)
+  }, [id])
 
   const [activeTab, setActiveTab] = useState('track')
 
-  const trackOption = {
+  const trackOption = useMemo(() => ({
     backgroundColor: 'transparent',
     title: {
       text: '近7天行驶轨迹',
@@ -98,9 +112,9 @@ const VehicleDetail = () => {
         },
       },
     ],
-  }
+  }), [trackPoints])
 
-  const tankOption = {
+  const tankOption = useMemo(() => ({
     backgroundColor: 'transparent',
     title: {
       text: '近7天罐体参数变化曲线',
@@ -148,7 +162,7 @@ const VehicleDetail = () => {
         areaStyle: { color: 'rgba(19,194,194,0.1)' },
       },
     ],
-  }
+  }), [tankParams])
 
   const violationColumns: ColumnsType<ViolationRecord> = [
     {
@@ -200,6 +214,14 @@ const VehicleDetail = () => {
     return <Badge status={s.color as any} text={s.text} />
   }
 
+  if (!vehicle) {
+    return (
+      <div className="flex justify-center items-center h-96">
+        <Spin size="large" />
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-4">
@@ -210,7 +232,7 @@ const VehicleDetail = () => {
           车辆详情：{vehicle.plateNumber}
         </Title>
         <StatusBadge status={vehicle.status} />
-        <Button icon={<ReloadOutlined />} className="ml-auto">刷新数据</Button>
+        <Button icon={<ReloadOutlined />} className="ml-auto" onClick={fetchDetail} loading={loading}>刷新数据</Button>
       </div>
 
       <Row gutter={[16, 16]}>

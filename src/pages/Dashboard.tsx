@@ -1,4 +1,4 @@
-import { Row, Col, Card, Statistic, Tag, List, Avatar, Typography, Progress } from 'antd'
+import { Row, Col, Card, Statistic, Tag, List, Avatar, Typography, Progress, Spin } from 'antd'
 import {
   CarOutlined,
   WarningOutlined,
@@ -12,13 +12,8 @@ import {
 import ReactECharts from 'echarts-for-react'
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
-import {
-  mockVehicles,
-  mockWarnings,
-  mockProvinceHeat,
-  mockHighRiskRoutes,
-  mockWeeklyReport,
-} from '@/data/mock'
+import { useState, useEffect, useMemo } from 'react'
+import { riskApi, type DashboardSummary } from '@/api/client'
 
 const { Title, Text } = Typography
 
@@ -51,138 +46,173 @@ const WarningTypeTag = ({ type }: { type: string }) => {
   )
 }
 
-const sortedProvinces = [...mockProvinceHeat].sort((a, b) => b.value - a.value).slice(0, 15)
-
-const heatmapOption = {
-  backgroundColor: 'transparent',
-  title: {
-    text: '全国各省份运输强度排名 TOP 15',
-    subtext: '按在运车辆数量与预警综合指数排序',
-    left: 'center',
-    top: 10,
-    textStyle: { color: '#e6f4ff', fontSize: 16, fontWeight: 600 },
-    subtextStyle: { color: '#8c8c8c', fontSize: 12 },
-  },
-  tooltip: {
-    trigger: 'axis',
-    axisPointer: { type: 'shadow' },
-    formatter: (params: any[]) => {
-      const p = params[0]
-      const data = sortedProvinces[p.dataIndex]
-      return `<b>${data.name}</b><br/>运输强度指数：${data.value}<br/>在运车辆：${data.vehicleCount}辆<br/>预警数量：${data.warningCount}次`
-    },
-    backgroundColor: 'rgba(0,21,41,0.95)',
-    borderColor: '#1677ff',
-    textStyle: { color: '#fff' },
-  },
-  grid: { left: 100, right: 60, top: 70, bottom: 30 },
-  xAxis: {
-    type: 'value',
-    axisLine: { lineStyle: { color: '#1677ff55' } },
-    splitLine: { lineStyle: { color: '#1677ff22' } },
-    axisLabel: { color: '#8c8c8c' },
-  },
-  yAxis: {
-    type: 'category',
-    data: sortedProvinces.map(p => p.name.replace(/省|市|自治区|壮族|回族|维吾尔/g, '')).reverse(),
-    axisLine: { lineStyle: { color: '#1677ff55' } },
-    axisLabel: { color: '#e6f4ff', fontSize: 11 },
-  },
-  visualMap: {
-    min: 0,
-    max: 500,
-    right: 10,
-    top: 'center',
-    orient: 'vertical',
-    text: ['高', '低'],
-    textStyle: { color: '#e6f4ff' },
-    calculable: true,
-    itemWidth: 12,
-    itemHeight: 120,
-    inRange: {
-      color: ['#0a3d62', '#1e6091', '#3c8dbc', '#52c41a', '#faad14', '#ff7a45', '#ff4d4f'],
-    },
-  },
-  series: [
-    {
-      name: '运输强度指数',
-      type: 'bar',
-      data: sortedProvinces.map(p => p.value).reverse(),
-      barWidth: 16,
-      label: {
-        show: true,
-        position: 'right',
-        color: '#e6f4ff',
-        fontSize: 10,
-      },
-      itemStyle: {
-        borderRadius: [0, 4, 4, 0],
-      },
-    },
-  ],
-}
-
-const statusPieOption = {
-  backgroundColor: 'transparent',
-  tooltip: { trigger: 'item', formatter: '{b}: {c}辆 ({d}%)' },
-  legend: { bottom: 0, textStyle: { color: '#595959' } },
-  series: [
-    {
-      type: 'pie',
-      radius: ['45%', '70%'],
-      center: ['50%', '45%'],
-      avoidLabelOverlap: false,
-      label: { show: false },
-      emphasis: {
-        label: { show: true, fontSize: 14, fontWeight: 'bold' },
-      },
-      data: [
-        { value: mockVehicles.filter(v => v.status === 'running').length, name: '行驶中', itemStyle: { color: '#52c41a' } },
-        { value: mockVehicles.filter(v => v.status === 'stopped').length, name: '已停车', itemStyle: { color: '#8c8c8c' } },
-        { value: mockVehicles.filter(v => v.status === 'warning').length, name: '预警', itemStyle: { color: '#faad14' } },
-        { value: mockVehicles.filter(v => v.status === 'danger').length, name: '危险', itemStyle: { color: '#ff4d4f' } },
-        { value: mockVehicles.filter(v => v.status === 'offline').length, name: '离线', itemStyle: { color: '#bfbfbf' } },
-      ],
-    },
-  ],
-}
-
-const violationTrendOption = {
-  backgroundColor: 'transparent',
-  tooltip: { trigger: 'axis' },
-  legend: { data: ['违规数', '预警数'], bottom: 0 },
-  grid: { left: 40, right: 20, top: 30, bottom: 40 },
-  xAxis: {
-    type: 'category',
-    data: Array.from({ length: 7 }, (_, i) => dayjs().subtract(6 - i, 'day').format('MM-DD')),
-  },
-  yAxis: { type: 'value' },
-  series: [
-    {
-      name: '违规数',
-      type: 'line',
-      smooth: true,
-      data: [28, 35, 22, 30, 18, 25, 16],
-      itemStyle: { color: '#ff4d4f' },
-      areaStyle: { color: 'rgba(255,77,79,0.15)' },
-    },
-    {
-      name: '预警数',
-      type: 'line',
-      smooth: true,
-      data: [58, 72, 56, 65, 48, 60, 42],
-      itemStyle: { color: '#faad14' },
-      areaStyle: { color: 'rgba(250,173,20,0.15)' },
-    },
-  ],
-}
-
 const Dashboard = () => {
   const navigate = useNavigate()
+  const [data, setData] = useState<DashboardSummary | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  const totalRunning = mockVehicles.filter(v => v.status === 'running').length
-  const totalWarning = mockVehicles.filter(v => v.status === 'warning' || v.status === 'danger').length
-  const todayWarnings = mockWarnings.filter(w => dayjs(w.createdAt).isSame(dayjs(), 'day')).length
+  const fetchData = async () => {
+    try {
+      const res = await riskApi.getDashboardSummary()
+      setData(res)
+    } catch (e) {
+      console.error('Failed to fetch dashboard data:', e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchData()
+    const timer = setInterval(fetchData, 5000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const sortedProvinces = useMemo(() => {
+    if (!data) return []
+    return [...data.provinceHeat].sort((a, b) => b.value - a.value).slice(0, 15)
+  }, [data])
+
+  const heatmapOption = useMemo(() => ({
+    backgroundColor: 'transparent',
+    title: {
+      text: '全国各省份运输强度排名 TOP 15',
+      subtext: '按在运车辆数量与预警综合指数排序',
+      left: 'center',
+      top: 10,
+      textStyle: { color: '#e6f4ff', fontSize: 16, fontWeight: 600 },
+      subtextStyle: { color: '#8c8c8c', fontSize: 12 },
+    },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params: any[]) => {
+        const p = params[0]
+        const d = sortedProvinces[p.dataIndex]
+        if (!d) return ''
+        return `<b>${d.name}</b><br/>运输强度指数：${d.value}<br/>在运车辆：${d.vehicleCount}辆<br/>预警数量：${d.warningCount}次`
+      },
+      backgroundColor: 'rgba(0,21,41,0.95)',
+      borderColor: '#1677ff',
+      textStyle: { color: '#fff' },
+    },
+    grid: { left: 100, right: 60, top: 70, bottom: 30 },
+    xAxis: {
+      type: 'value',
+      axisLine: { lineStyle: { color: '#1677ff55' } },
+      splitLine: { lineStyle: { color: '#1677ff22' } },
+      axisLabel: { color: '#8c8c8c' },
+    },
+    yAxis: {
+      type: 'category',
+      data: sortedProvinces.map(p => p.name.replace(/省|市|自治区|壮族|回族|维吾尔/g, '')).reverse(),
+      axisLine: { lineStyle: { color: '#1677ff55' } },
+      axisLabel: { color: '#e6f4ff', fontSize: 11 },
+    },
+    visualMap: {
+      min: 0,
+      max: 500,
+      right: 10,
+      top: 'center',
+      orient: 'vertical',
+      text: ['高', '低'],
+      textStyle: { color: '#e6f4ff' },
+      calculable: true,
+      itemWidth: 12,
+      itemHeight: 120,
+      inRange: {
+        color: ['#0a3d62', '#1e6091', '#3c8dbc', '#52c41a', '#faad14', '#ff7a45', '#ff4d4f'],
+      },
+    },
+    series: [
+      {
+        name: '运输强度指数',
+        type: 'bar',
+        data: sortedProvinces.map(p => p.value).reverse(),
+        barWidth: 16,
+        label: {
+          show: true,
+          position: 'right',
+          color: '#e6f4ff',
+          fontSize: 10,
+        },
+        itemStyle: {
+          borderRadius: [0, 4, 4, 0],
+        },
+      },
+    ],
+  }), [sortedProvinces])
+
+  const statusPieOption = useMemo(() => {
+    const dist = data?.statusDistribution || {}
+    return {
+      backgroundColor: 'transparent',
+      tooltip: { trigger: 'item', formatter: '{b}: {c}辆 ({d}%)' },
+      legend: { bottom: 0, textStyle: { color: '#595959' } },
+      series: [
+        {
+          type: 'pie',
+          radius: ['45%', '70%'],
+          center: ['50%', '45%'],
+          avoidLabelOverlap: false,
+          label: { show: false },
+          emphasis: {
+            label: { show: true, fontSize: 14, fontWeight: 'bold' },
+          },
+          data: [
+            { value: dist.running || 0, name: '行驶中', itemStyle: { color: '#52c41a' } },
+            { value: dist.stopped || 0, name: '已停车', itemStyle: { color: '#8c8c8c' } },
+            { value: dist.warning || 0, name: '预警', itemStyle: { color: '#faad14' } },
+            { value: dist.danger || 0, name: '危险', itemStyle: { color: '#ff4d4f' } },
+            { value: dist.offline || 0, name: '离线', itemStyle: { color: '#bfbfbf' } },
+          ],
+        },
+      ],
+    }
+  }, [data])
+
+  const violationTrendOption = useMemo(() => ({
+    backgroundColor: 'transparent',
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['违规数', '预警数'], bottom: 0 },
+    grid: { left: 40, right: 20, top: 30, bottom: 40 },
+    xAxis: {
+      type: 'category',
+      data: data?.trendLabels || Array.from({ length: 7 }, (_, i) => dayjs().subtract(6 - i, 'day').format('MM-DD')),
+    },
+    yAxis: { type: 'value' },
+    series: [
+      {
+        name: '违规数',
+        type: 'line',
+        smooth: true,
+        data: data?.violationTrend || [],
+        itemStyle: { color: '#ff4d4f' },
+        areaStyle: { color: 'rgba(255,77,79,0.15)' },
+      },
+      {
+        name: '预警数',
+        type: 'line',
+        smooth: true,
+        data: data?.warningTrend || [],
+        itemStyle: { color: '#faad14' },
+        areaStyle: { color: 'rgba(250,173,20,0.15)' },
+      },
+    ],
+  }), [data])
+
+  if (loading || !data) {
+    return (
+      <div className="min-h-[600px] flex items-center justify-center">
+        <Spin size="large" tip="加载中..." />
+      </div>
+    )
+  }
+
+  const totalRunning = data.runningVehicles
+  const totalWarning = data.warningVehicles
+  const todayWarnings = data.todayWarningCount
+  const totalVehicles = data.totalVehicles
 
   return (
     <div className="space-y-4">
@@ -197,10 +227,10 @@ const Dashboard = () => {
                 </span>
               }
               value={totalRunning}
-              suffix={`/ ${mockVehicles.length}`}
+              suffix={`/ ${totalVehicles}`}
               valueStyle={{ color: '#1677ff', fontWeight: 700 }}
             />
-            <Progress percent={Math.round((totalRunning / mockVehicles.length) * 100)} size="small" showInfo={false} />
+            <Progress percent={Math.round((totalRunning / totalVehicles) * 100)} size="small" showInfo={false} />
           </Card>
         </Col>
         <Col xs={12} sm={12} md={6}>
@@ -216,7 +246,7 @@ const Dashboard = () => {
               valueStyle={{ color: '#faad14', fontWeight: 700 }}
               prefix={<ThunderboltOutlined />}
             />
-            <Progress percent={Math.round((totalWarning / mockVehicles.length) * 100)} status="exception" size="small" showInfo={false} />
+            <Progress percent={Math.round((totalWarning / totalVehicles) * 100)} status="exception" size="small" showInfo={false} />
           </Card>
         </Col>
         <Col xs={12} sm={12} md={6}>
@@ -244,16 +274,16 @@ const Dashboard = () => {
                   罐体达标率
                 </span>
               }
-              value={mockWeeklyReport.avgTankComplianceRate}
+              value={data.avgTankComplianceRate}
               precision={1}
               suffix="%"
               valueStyle={{ color: '#52c41a', fontWeight: 700 }}
             />
             <div className="flex items-center gap-1 text-xs">
-              {mockWeeklyReport.avgTankComplianceRateWoW >= 0 ? (
-                <><RiseOutlined className="text-green-500" /> <span className="text-green-500">+{mockWeeklyReport.avgTankComplianceRateWoW}%</span></>
+              {data.tankComplianceRateChange >= 0 ? (
+                <><RiseOutlined className="text-green-500" /> <span className="text-green-500">+{data.tankComplianceRateChange}%</span></>
               ) : (
-                <><FallOutlined className="text-red-500" /> <span className="text-red-500">{mockWeeklyReport.avgTankComplianceRateWoW}%</span></>
+                <><FallOutlined className="text-red-500" /> <span className="text-red-500">{data.tankComplianceRateChange}%</span></>
               )}
               <span className="text-gray-400">较上周</span>
             </div>
@@ -282,7 +312,7 @@ const Dashboard = () => {
             styles={{ body: { padding: 8 } }}
           >
             <List
-              dataSource={mockHighRiskRoutes}
+              dataSource={data.highRiskRoutes}
               renderItem={(route, idx) => {
                 const riskColor = route.riskLevel === 'high' ? '#ff4d4f' : route.riskLevel === 'medium' ? '#faad14' : '#52c41a'
                 return (
@@ -332,7 +362,7 @@ const Dashboard = () => {
             }
           >
             <List
-              dataSource={mockWarnings.slice(0, 5)}
+              dataSource={data.recentWarnings.slice(0, 5)}
               renderItem={warn => (
                 <List.Item
                   className="!px-0 hover:bg-gray-50 rounded-lg p-2 cursor-pointer"

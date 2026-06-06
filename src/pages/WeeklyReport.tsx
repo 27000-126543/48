@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import {
   Row,
   Col,
@@ -13,7 +14,7 @@ import {
   Alert,
   Timeline,
   Divider,
-  Tabs,
+  Spin,
   Tooltip,
 } from 'antd'
 import {
@@ -35,9 +36,10 @@ import {
   InfoCircleOutlined,
 } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
-import { mockWeeklyReport } from '@/data/mock'
+import { riskApi } from '@/api/client'
+import type { WeeklyReport as IWeeklyReport } from '@/types'
 
-const { Title, Text, Paragraph } = Typography
+const { Title, Text } = Typography
 
 const TrendTag = ({ value, inverse = false }: { value: number; inverse?: boolean }) => {
   const positive = inverse ? value < 0 : value > 0
@@ -66,7 +68,29 @@ const PriorityTag = ({ p }: { p: 'high' | 'medium' | 'low' }) => {
 }
 
 const WeeklyReport = () => {
-  const report = mockWeeklyReport
+  const [report, setReport] = useState<IWeeklyReport | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const fetch = async () => {
+      setLoading(true)
+      try {
+        const res = await riskApi.getWeeklyReport()
+        setReport(res as any)
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetch()
+  }, [])
+
+  if (loading || !report) {
+    return (
+      <div className="text-center py-20">
+        <Spin size="large" />
+      </div>
+    )
+  }
 
   const typeLabels: Record<string, string> = {
     temperature: '罐体温度超标',
@@ -113,14 +137,14 @@ const WeeklyReport = () => {
     tooltip: { trigger: 'axis' },
     legend: { data: ['违规率(%)', '事故率(‰)'], bottom: 0 },
     grid: { left: 50, right: 50, top: 50, bottom: 40 },
-    xAxis: { type: 'category', data: ['W16', 'W17', 'W18', 'W19', 'W20', 'W21', 'W22', 'W23'] },
+    xAxis: { type: 'category', data: ['W16', 'W17', 'W18', 'W19', 'W20', 'W21', 'W22', `W${String(report.weekNumber).padStart(2, '0')}`] },
     yAxis: [{ type: 'value', name: '违规率(%)' }, { type: 'value', name: '事故率(‰)' }],
     series: [
       {
         name: '违规率(%)',
         type: 'line',
         smooth: true,
-        data: [8.2, 7.5, 7.1, 6.8, 6.5, 6.2, 6.23, 5.71],
+        data: [8.2, 7.5, 7.1, 6.8, 6.5, 6.2, 6.23, report.violationRate],
         itemStyle: { color: '#ff4d4f' },
         markLine: { data: [{ type: 'average', name: '平均值' }] },
         areaStyle: { color: 'rgba(255,77,79,0.1)' },
@@ -130,7 +154,7 @@ const WeeklyReport = () => {
         type: 'line',
         smooth: true,
         yAxisIndex: 1,
-        data: [0.25, 0.18, 0.22, 0.15, 0.18, 0.12, 0.12, 0.06],
+        data: [0.25, 0.18, 0.22, 0.15, 0.18, 0.12, 0.12, report.accidentRate],
         itemStyle: { color: '#722ed1' },
       },
     ],
@@ -145,9 +169,9 @@ const WeeklyReport = () => {
     xAxis: { type: 'category', data: ['去年同期', '上周', '本周'] },
     yAxis: { type: 'value' },
     series: [
-      { name: '违规数', type: 'bar', data: [268, 203, 186], itemStyle: { color: '#ff4d4f' }, barWidth: 30 },
-      { name: '事故数', type: 'bar', data: [5, 4, 2], itemStyle: { color: '#722ed1' }, barWidth: 30 },
-      { name: '预警数', type: 'bar', data: [620, 458, 402], itemStyle: { color: '#faad14' }, barWidth: 30 },
+      { name: '违规数', type: 'bar', data: [268, 203, report.totalViolations], itemStyle: { color: '#ff4d4f' }, barWidth: 30 },
+      { name: '事故数', type: 'bar', data: [5, 4, report.totalAccidents], itemStyle: { color: '#722ed1' }, barWidth: 30 },
+      { name: '预警数', type: 'bar', data: [620, 458, Math.round(report.totalViolations * 2.1)], itemStyle: { color: '#faad14' }, barWidth: 30 },
     ],
   }
 
@@ -167,7 +191,7 @@ const WeeklyReport = () => {
             <Space wrap className="!text-gray-600">
               <span>
                 <CalendarOutlined className="mr-1" />
-                第 {report.weekNumber} 周 ({report.startDate} ~ {report.endDate})
+                第 {report.weekNumber} 周 ({report.startDate} ~ {report.endDate}
               </span>
               <Tag color="blue">报告编号: RPT-{report.year}-{String(report.weekNumber).padStart(2, '0')}</Tag>
               <Tag color="green" icon={<CheckCircleOutlined />}>
@@ -257,7 +281,7 @@ const WeeklyReport = () => {
             <Progress percent={report.avgTankComplianceRate} size="small" strokeColor="#52c41a" showInfo={false} />
           </Card>
         </Col>
-      </Row>
+        </Row>
 
       <Alert
         type={report.violationRateWoW < 0 ? 'success' : 'warning'}
@@ -304,7 +328,7 @@ const WeeklyReport = () => {
                   <Space>
                     <Tag color="blue">{v.count} 次</Tag>
                     <Progress
-                      percent={Math.round((v.count / report.totalViolations) * 100)}
+                      percent={Math.round((v.count / Math.max(1, report.totalViolations)) * 100)}
                       size="small"
                       showInfo={false}
                       style={{ width: 80 }}
@@ -417,7 +441,7 @@ const WeeklyReport = () => {
               <InfoCircleOutlined className="text-gray-400" />
             </Tooltip>
           </Space>
-        }
+          }
         className="!rounded-xl border-0"
         extra={<Tag color="blue">共 {report.rectificationPlans.length} 项</Tag>}
       >
@@ -442,7 +466,7 @@ const WeeklyReport = () => {
                       截止：{item.deadline}
                     </Tag>
                   </Space>
-                </Col>
+                  </Col>
                 <Col flex="none">
                   <Space>
                     <Button size="small">指派</Button>

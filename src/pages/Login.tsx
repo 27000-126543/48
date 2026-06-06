@@ -1,28 +1,23 @@
-import { Card, Radio, Typography, Button, Space, message } from 'antd'
-import { useState } from 'react'
+import { Card, Typography, Button, Form, Input, message, Alert } from 'antd'
+import { UserOutlined, LockOutlined, SafetyOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { SafetyOutlined } from '@ant-design/icons'
-import type { UserRole } from '@/types'
 import { useAuth } from '@/contexts/AuthContext'
 
-const { Title, Paragraph } = Typography
+const { Title, Paragraph, Text } = Typography
 
 const Login = () => {
-  const [role, setRole] = useState<UserRole>('provincial')
-  const { login } = useAuth()
+  const { login, loading } = useAuth()
   const navigate = useNavigate()
+  const [form] = Form.useForm()
 
-  const handleLogin = () => {
-    login(role)
-    message.success('登录成功')
-    navigate('/dashboard')
+  const onFinish = async (values: { username: string; password: string }) => {
+    try {
+      await login(values.username, values.password)
+      navigate('/dashboard')
+    } catch (e: any) {
+      message.error(e.message || '登录失败')
+    }
   }
-
-  const roleOptions = [
-    { label: '省级监管用户', value: 'provincial' as UserRole, desc: '查看全国数据，统筹监管' },
-    { label: '市级监管用户', value: 'municipal' as UserRole, desc: '查看本市及所辖企业数据' },
-    { label: '企业管理员', value: 'enterprise' as UserRole, desc: '管理本企业车辆和预警处置' },
-  ]
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-900 via-blue-800 to-indigo-900 p-6">
@@ -43,42 +38,66 @@ const Login = () => {
           </Paragraph>
         </div>
 
-        <div className="space-y-4 mb-6">
-          <div className="text-sm font-medium text-gray-700 mb-2">选择登录身份</div>
-          <Radio.Group
-            value={role}
-            onChange={e => setRole(e.target.value)}
-            className="w-full"
-          >
-            <div className="space-y-2">
-              {roleOptions.map(opt => (
-                <label
-                  key={opt.value}
-                  className={`block p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                    role === opt.value
-                      ? 'border-blue-500 bg-blue-50'
-                      : 'border-gray-200 bg-white hover:border-blue-300'
-                  }`}
-                >
-                  <Radio value={opt.value} className="!mt-0">
-                    <div className="font-medium">{opt.label}</div>
-                    <div className="text-sm text-gray-500 ml-6">{opt.desc}</div>
-                  </Radio>
-                </label>
-              ))}
-            </div>
-          </Radio.Group>
-        </div>
-
-        <Button
-          type="primary"
-          size="large"
-          block
-          onClick={handleLogin}
-          className="h-12 text-base rounded-xl"
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={onFinish}
+          requiredMark={false}
+          className="space-y-4"
         >
-          进入系统
-        </Button>
+          <Form.Item
+            name="username"
+            label="用户名"
+            rules={[{ required: true, message: '请输入用户名' }]}
+          >
+            <Input
+              size="large"
+              prefix={<UserOutlined className="text-gray-400" />}
+              placeholder="请输入用户名"
+              className="!rounded-xl"
+            />
+          </Form.Item>
+          <Form.Item
+            name="password"
+            label="密码"
+            rules={[{ required: true, message: '请输入密码' }]}
+          >
+            <Input.Password
+              size="large"
+              prefix={<LockOutlined className="text-gray-400" />}
+              placeholder="请输入密码"
+              className="!rounded-xl"
+            />
+          </Form.Item>
+          <Form.Item className="!mb-0">
+            <Button
+              type="primary"
+              size="large"
+              htmlType="submit"
+              block
+              loading={loading}
+              className="h-12 text-base rounded-xl"
+            >
+              登录
+            </Button>
+          </Form.Item>
+        </Form>
+
+        <div className="mt-6">
+          <Alert
+            type="info"
+            showIcon
+            message="测试账号"
+            description={
+              <div className="space-y-1 text-sm">
+                <div><Text strong>省级监管：</Text>admin_province / 123456</div>
+                <div><Text strong>市级监管：</Text>admin_city / 123456</div>
+                <div><Text strong>企业管理：</Text>admin_company / 123456</div>
+              </div>
+            }
+            className="!rounded-xl"
+          />
+        </div>
 
         <div className="mt-6 text-center text-xs text-gray-400">
           演示系统 · 已预置演示账号和模拟数据

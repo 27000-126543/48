@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Row,
   Col,
@@ -35,8 +35,8 @@ import {
 import type { UploadFile, UploadProps } from 'antd'
 import ReactECharts from 'echarts-for-react'
 import dayjs from 'dayjs'
-import { mockWeather, mockRestrictions, mockRouteRecommendations, mockHighRiskRoutes } from '@/data/mock'
-import type { WeatherData, RestrictionData, RouteRecommendation } from '@/types'
+import { riskApi } from '@/api/client'
+import type { WeatherData, RestrictionData, RouteRecommendation, HighRiskRoute } from '@/types'
 
 const { Title, Text, Paragraph } = Typography
 
@@ -56,15 +56,66 @@ const RiskPrediction = () => {
   const [weatherFileList, setWeatherFileList] = useState<UploadFile[]>([])
   const [restrictionFileList, setRestrictionFileList] = useState<UploadFile[]>([])
   const [predicting, setPredicting] = useState(false)
-  const [predicted, setPredicted] = useState(true)
+  const [predicted, setPredicted] = useState(false)
+
+  const [weather, setWeather] = useState<WeatherData[]>([])
+  const [restrictions, setRestrictions] = useState<RestrictionData[]>([])
+  const [recommendations, setRecommendations] = useState<RouteRecommendation[]>([])
+  const [highRiskRoutes, setHighRiskRoutes] = useState<HighRiskRoute[]>([])
+  const [hourData, setHourData] = useState<{ hour: string; riskScore: number; vehicleCount: number }[]>([])
+  const [riskPeriods, setRiskPeriods] = useState<{ high: string[]; medium: string[]; low: string[] }>({
+    high: [],
+    medium: [],
+    low: [],
+  })
+
+  useEffect(() => {
+    const loadInitialData = async () => {
+      try {
+        const [weatherRes, restrictionsRes, predictionRes] = await Promise.all([
+          riskApi.getWeather(),
+          riskApi.getRestrictions(),
+          riskApi.getPrediction(),
+        ])
+        setWeather(weatherRes.data)
+        setRestrictions(restrictionsRes.data)
+        setHourData(predictionRes.hourData)
+        setRecommendations(predictionRes.recommendations)
+        setHighRiskRoutes(predictionRes.highRiskRoutes)
+        setRiskPeriods({
+          high: predictionRes.highRiskPeriods,
+          medium: predictionRes.mediumRiskPeriods,
+          low: predictionRes.lowRiskPeriods,
+        })
+        setPredicted(true)
+      } catch (err: any) {
+        message.error(err.message || '加载数据失败')
+      }
+    }
+    loadInitialData()
+  }, [])
 
   const weatherProps: UploadProps = {
     onRemove: file => {
       setWeatherFileList(prev => prev.filter(f => f.uid !== file.uid))
     },
-    beforeUpload: file => {
-      setWeatherFileList(prev => [...prev, file])
-      message.success(`气象数据文件 "${file.name}" 已上传，正在解析...`)
+    beforeUpload: async file => {
+      try {
+        setWeatherFileList(prev => [...prev, { ...file, status: 'uploading' }])
+        const res = await riskApi.uploadWeather(file as File)
+        if (res.success) {
+          setWeather(res.data)
+          setWeatherFileList(prev =>
+            prev.map(f => (f.uid === file.uid ? { ...f, status: 'done' as const } : f)),
+          )
+          message.success(`气象数据文件 "${file.name}" 上传成功，共解析 ${res.count} 条记录`)
+        }
+      } catch (err: any) {
+        setWeatherFileList(prev =>
+          prev.map(f => (f.uid === file.uid ? { ...f, status: 'error' as const } : f)),
+        )
+        message.error(err.message || '气象数据上传失败')
+      }
       return false
     },
     accept: '.xlsx,.xls,.csv',
@@ -75,22 +126,48 @@ const RiskPrediction = () => {
     onRemove: file => {
       setRestrictionFileList(prev => prev.filter(f => f.uid !== file.uid))
     },
-    beforeUpload: file => {
-      setRestrictionFileList(prev => [...prev, file])
-      message.success(`限行数据文件 "${file.name}" 已上传，正在解析...`)
+    beforeUpload: async file => {
+      try {
+        setRestrictionFileList(prev => [...prev, { ...file, status: 'uploading' }])
+        const res = await riskApi.uploadRestriction(file as File)
+        if (res.success) {
+          setRestrictions(res.data)
+          setRestrictionFileList(prev =>
+            prev.map(f => (f.uid === file.uid ? { ...f, status: 'done' as const } : f)),
+          )
+          message.success(`限行数据文件 "${file.name}" 上传成功，共解析 ${res.count} 条记录`)
+        }
+      } catch (err: any) {
+        setRestrictionFileList(prev =>
+          prev.map(f => (f.uid === file.uid ? { ...f, status: 'error' as const } : f)),
+        )
+        message.error(err.message || '限行数据上传失败')
+      }
       return false
     },
     accept: '.xlsx,.xls,.csv',
     fileList: restrictionFileList,
   }
 
-  const runPrediction = () => {
-    setPredicting(true)
-    setTimeout(() => {
-      setPredicting(false)
+  const runPrediction = async () => {
+    try {
+      setPredicting(true)
+      const res = await riskApi.getPrediction()
+      setHourData(res.hourData)
+      setRecommendations(res.recommendations)
+      setHighRiskRoutes(res.highRiskRoutes)
+      setRiskPeriods({
+        high: res.highRiskPeriods,
+        medium: res.mediumRiskPeriods,
+        low: res.lowRiskPeriods,
+      })
       setPredicted(true)
       message.success('风险预测完成，已生成绕行路线推荐')
-    }, 2000)
+    } catch (err: any) {
+      message.error(err.message || '风险预测失败')
+    } finally {
+      setPredicting(false)
+    }
   }
 
   const riskPredictionOption = {
@@ -105,7 +182,10 @@ const RiskPrediction = () => {
     grid: { left: 50, right: 50, top: 50, bottom: 50 },
     xAxis: {
       type: 'category',
-      data: Array.from({ length: 24 }, (_, i) => `${dayjs().hour(i).format('HH')}:00`),
+      data:
+        hourData.length > 0
+          ? hourData.map(h => h.hour)
+          : Array.from({ length: 24 }, (_, i) => `${dayjs().hour(i).format('HH')}:00`),
       axisLabel: { fontSize: 10 },
     },
     yAxis: [
@@ -117,11 +197,15 @@ const RiskPrediction = () => {
         name: '风险指数',
         type: 'line',
         smooth: true,
-        data: [35, 30, 28, 25, 28, 42, 68, 82, 78, 65, 55, 48, 52, 58, 65, 72, 85, 90, 88, 75, 62, 50, 42, 38],
+        data: hourData.length > 0 ? hourData.map(h => h.riskScore) : [],
         itemStyle: { color: '#ff4d4f' },
         areaStyle: {
           color: {
-            type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+            type: 'linear',
+            x: 0,
+            y: 0,
+            x2: 0,
+            y2: 1,
             colorStops: [
               { offset: 0, color: 'rgba(255,77,79,0.4)' },
               { offset: 1, color: 'rgba(255,77,79,0.02)' },
@@ -140,7 +224,7 @@ const RiskPrediction = () => {
         name: '在途车辆',
         type: 'bar',
         yAxisIndex: 1,
-        data: [280, 250, 220, 180, 260, 580, 980, 1450, 1680, 1520, 1380, 1250, 1320, 1450, 1580, 1720, 1850, 1780, 1520, 1120, 780, 520, 380, 320],
+        data: hourData.length > 0 ? hourData.map(h => h.vehicleCount) : [],
         itemStyle: { color: 'rgba(22,119,255,0.5)', borderRadius: [4, 4, 0, 0] },
       },
     ],
@@ -195,7 +279,7 @@ const RiskPrediction = () => {
               </span>
             }
             className="!rounded-xl border-0"
-            extra={<Tag color="blue">已加载 {mockWeather.length} 条记录</Tag>}
+            extra={<Tag color="blue">已加载 {weather.length} 条记录</Tag>}
           >
             <Upload.Dragger {...weatherProps} multiple className="!mb-3">
               <p className="ant-upload-drag-icon">
@@ -209,7 +293,7 @@ const RiskPrediction = () => {
             <Table
               size="small"
               columns={weatherColumns}
-              dataSource={mockWeather}
+              dataSource={weather}
               rowKey={(r, i) => `${r.city}-${i}`}
               pagination={false}
               scroll={{ y: 180 }}
@@ -225,7 +309,7 @@ const RiskPrediction = () => {
               </span>
             }
             className="!rounded-xl border-0"
-            extra={<Tag color="orange">已加载 {mockRestrictions.length} 条记录</Tag>}
+            extra={<Tag color="orange">已加载 {restrictions.length} 条记录</Tag>}
           >
             <Upload.Dragger {...restrictionProps} multiple className="!mb-3">
               <p className="ant-upload-drag-icon">
@@ -239,7 +323,7 @@ const RiskPrediction = () => {
             <Table
               size="small"
               columns={restrictionColumns}
-              dataSource={mockRestrictions}
+              dataSource={restrictions}
               rowKey={(r, i) => `${r.road}-${i}`}
               pagination={false}
               scroll={{ y: 180 }}
@@ -262,12 +346,7 @@ const RiskPrediction = () => {
         extra={
           <Space>
             <Button icon={<ReloadOutlined />}>重新加载数据</Button>
-            <Button
-              type="primary"
-              icon={<RocketOutlined />}
-              loading={predicting}
-              onClick={runPrediction}
-            >
+            <Button type="primary" icon={<RocketOutlined />} loading={predicting} onClick={runPrediction}>
               {predicting ? '预测中...' : '运行风险预测'}
             </Button>
           </Space>
@@ -276,18 +355,35 @@ const RiskPrediction = () => {
         <Row gutter={[16, 16]} className="mb-4">
           <Col xs={8}>
             <Card size="small" className="!bg-red-50 !text-center">
-              <Statistic title="高风险时段" value={6} suffix="个" valueStyle={{ color: '#ff4d4f' }} />
-              <Text type="secondary" className="text-xs">16:00-22:00 晚高峰+降雨</Text>
+              <Statistic
+                title="高风险时段"
+                value={riskPeriods.high.length}
+                suffix="个"
+                valueStyle={{ color: '#ff4d4f' }}
+              />
+              <Text type="secondary" className="text-xs">
+                {riskPeriods.high.length > 0 ? riskPeriods.high.join('、') : '暂无高风险时段'}
+              </Text>
             </Card>
           </Col>
           <Col xs={8}>
             <Card size="small" className="!bg-orange-50 !text-center">
-              <Statistic title="中风险时段" value={8} suffix="个" valueStyle={{ color: '#faad14' }} />
+              <Statistic
+                title="中风险时段"
+                value={riskPeriods.medium.length}
+                suffix="个"
+                valueStyle={{ color: '#faad14' }}
+              />
             </Card>
           </Col>
           <Col xs={8}>
             <Card size="small" className="!bg-green-50 !text-center">
-              <Statistic title="低风险时段" value={10} suffix="个" valueStyle={{ color: '#52c41a' }} />
+              <Statistic
+                title="低风险时段"
+                value={riskPeriods.low.length}
+                suffix="个"
+                valueStyle={{ color: '#52c41a' }}
+              />
               <Text type="secondary" className="text-xs">建议优先安排运输</Text>
             </Card>
           </Col>
@@ -295,7 +391,7 @@ const RiskPrediction = () => {
 
         <ReactECharts option={riskPredictionOption} style={{ height: 360 }} />
 
-        {predicted && (
+        {predicted && recommendations.length > 0 && (
           <Alert
             type="warning"
             showIcon
@@ -303,9 +399,25 @@ const RiskPrediction = () => {
             message="高风险预警"
             description={
               <Space direction="vertical" size={4}>
-                <span>• 17:00-20:00 江苏省、浙江省暴雨，能见度不足1km，风险指数 85-90</span>
-                <span>• G42沪蓉高速南京段、G60沪昆高速杭州段有施工/交通管制，预计拥堵2小时以上</span>
-                <span>• 建议所有经过上述区域的车辆推迟出发或选择绕行路线</span>
+                {riskPeriods.high.length > 0 && (
+                  <span>• 高风险时段：{riskPeriods.high.join('、')}，建议调整运输计划</span>
+                )}
+                {weather.filter(w => w.riskLevel === 'high').length > 0 && (
+                  <span>
+                    •{' '}
+                    {weather
+                      .filter(w => w.riskLevel === 'high')
+                      .map(w => `${w.province}${w.city}`)
+                      .join('、')}
+                    天气恶劣，能见度低
+                  </span>
+                )}
+                {restrictions.length > 0 && (
+                  <span>• {restrictions.length} 条道路限行/管制记录，建议查看并规划绕行</span>
+                )}
+                {recommendations.length > 0 && (
+                  <span>• 已生成 {recommendations.length} 条智能绕行路线推荐</span>
+                )}
               </Space>
             }
           />
@@ -318,12 +430,17 @@ const RiskPrediction = () => {
           <Space>
             <SafetyOutlined className="text-green-500" />
             <span>智能绕行路线推荐</span>
-            <Badge count={mockRouteRecommendations.length} size="small" />
+            <Badge count={recommendations.length} size="small" />
           </Space>
         }
       >
-        {mockRouteRecommendations.map(rec => (
-          <Card key={rec.id} size="small" className="!mb-3 hover:!shadow-md transition-shadow" styles={{ body: { padding: 16 } }}>
+        {recommendations.map(rec => (
+          <Card
+            key={rec.id}
+            size="small"
+            className="!mb-3 hover:!shadow-md transition-shadow"
+            styles={{ body: { padding: 16 } }}
+          >
             <Row gutter={[16, 8]} align="middle">
               <Col xs={24} md={10}>
                 <Space direction="vertical" size={4} className="w-full">
@@ -331,10 +448,14 @@ const RiskPrediction = () => {
                     <Tag color="red">原路线风险: {rec.originalRisk}</Tag>
                     <ArrowRightOutlined className="text-gray-400" />
                     <Tag color="green">绕行风险: {rec.alternateRisk}</Tag>
-                    <Tag color="blue">风险下降 {Math.round(((rec.originalRisk - rec.alternateRisk) / rec.originalRisk) * 100)}%</Tag>
+                    <Tag color="blue">
+                      风险下降 {Math.round(((rec.originalRisk - rec.alternateRisk) / rec.originalRisk) * 100)}%
+                    </Tag>
                   </div>
                   <div className="text-gray-800">
-                    <Text delete type="secondary">{rec.originalRoute}</Text>
+                    <Text delete type="secondary">
+                      {rec.originalRoute}
+                    </Text>
                   </div>
                   <div className="text-green-600 font-medium">
                     <ArrowRightOutlined className="mr-1" />
@@ -351,14 +472,23 @@ const RiskPrediction = () => {
                 <div className="text-lg font-semibold">+{rec.extraTime} 分钟</div>
               </Col>
               <Col xs={24} md={2}>
-                <Button type="primary" size="small" block>采用</Button>
+                <Button type="primary" size="small" block>
+                  采用
+                </Button>
               </Col>
             </Row>
             <div className="mt-2 pt-2 border-t text-sm text-gray-600">
-              💡 <span className="font-medium">推荐理由：</span>{rec.reason}
+              💡 <span className="font-medium">推荐理由：</span>
+              {rec.reason}
             </div>
           </Card>
         ))}
+        {recommendations.length === 0 && (
+          <div className="text-center py-12 text-gray-400">
+            <SafetyOutlined className="text-4xl mb-3" />
+            <div>暂无绕行路线推荐，当前路线风险较低</div>
+          </div>
+        )}
       </Card>
 
       <Card
@@ -371,33 +501,45 @@ const RiskPrediction = () => {
         }
       >
         <Row gutter={[16, 16]}>
-          {mockHighRiskRoutes.filter(r => r.riskLevel !== 'low').map(route => (
-            <Col xs={24} md={12} key={route.id}>
-              <Card
-                size="small"
-                className={`!border-l-4 ${
-                  route.riskLevel === 'high' ? '!border-l-red-500' : '!border-l-orange-400'
-                }`}
-              >
-                <Row gutter={8} align="middle">
-                  <Col flex="auto">
-                    <div className="font-semibold text-gray-800">{route.name}</div>
-                    <div className="text-xs text-gray-500">{route.startCity} → {route.endCity} · {route.distance}km</div>
-                  </Col>
-                  <Col flex="none">
-                    <Tag color={riskColors[route.riskLevel]} className="!text-base !font-bold">
-                      {route.riskScore} 分
-                    </Tag>
-                  </Col>
-                </Row>
-                <div className="mt-2 pt-2 border-t flex items-center justify-between text-xs text-gray-500">
-                  <span>在途 {route.vehicleCount} 辆</span>
-                  <span className="text-red-500">预警 {route.warningCount} 次</span>
-                  <span>平均时速 {route.avgSpeed}km/h</span>
-                </div>
-              </Card>
+          {highRiskRoutes
+            .filter(r => r.riskLevel !== 'low')
+            .map(route => (
+              <Col xs={24} md={12} key={route.id}>
+                <Card
+                  size="small"
+                  className={`!border-l-4 ${
+                    route.riskLevel === 'high' ? '!border-l-red-500' : '!border-l-orange-400'
+                  }`}
+                >
+                  <Row gutter={8} align="middle">
+                    <Col flex="auto">
+                      <div className="font-semibold text-gray-800">{route.name}</div>
+                      <div className="text-xs text-gray-500">
+                        {route.startCity} → {route.endCity} · {route.distance}km
+                      </div>
+                    </Col>
+                    <Col flex="none">
+                      <Tag color={riskColors[route.riskLevel]} className="!text-base !font-bold">
+                        {route.riskScore} 分
+                      </Tag>
+                    </Col>
+                  </Row>
+                  <div className="mt-2 pt-2 border-t flex items-center justify-between text-xs text-gray-500">
+                    <span>在途 {route.vehicleCount} 辆</span>
+                    <span className="text-red-500">预警 {route.warningCount} 次</span>
+                    <span>平均时速 {route.avgSpeed}km/h</span>
+                  </div>
+                </Card>
+              </Col>
+            ))}
+          {highRiskRoutes.filter(r => r.riskLevel !== 'low').length === 0 && (
+            <Col span={24}>
+              <div className="text-center py-12 text-gray-400">
+                <SafetyOutlined className="text-4xl mb-3" />
+                <div>暂无高风险路段，道路安全状态良好</div>
+              </div>
             </Col>
-          ))}
+          )}
         </Row>
       </Card>
     </div>

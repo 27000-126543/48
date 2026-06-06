@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   Row,
   Col,
@@ -21,6 +21,7 @@ import {
   message,
   Timeline,
   Tooltip,
+  Alert,
 } from 'antd'
 import {
   WarningOutlined,
@@ -40,7 +41,7 @@ import {
 import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import type { Warning, WarningType, WarningLevel } from '@/types'
-import { mockWarnings } from '@/data/mock'
+import { warningsApi } from '@/api/client'
 
 const { Title, Text, Paragraph } = Typography
 const { Step } = Steps
@@ -74,13 +75,32 @@ const LevelTag = ({ level }: { level: WarningLevel }) => {
 
 const Warnings = () => {
   const navigate = useNavigate()
-  const [warnings, setWarnings] = useState<Warning[]>(mockWarnings)
+  const [warnings, setWarnings] = useState<Warning[]>([])
+  const [loading, setLoading] = useState(false)
   const [activeTab, setActiveTab] = useState('active')
   const [selected, setSelected] = useState<Warning | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const [approvalOpen, setApprovalOpen] = useState(false)
   const [approvalForm] = Form.useForm()
   const [currentApprovalLevel, setCurrentApprovalLevel] = useState<number>(1)
+
+  const fetchWarnings = useCallback(async () => {
+    try {
+      setLoading(true)
+      const res = await warningsApi.list()
+      setWarnings(res.items)
+    } catch (err: any) {
+      message.error(err.message || '获取预警列表失败')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchWarnings()
+    const timer = setInterval(fetchWarnings, 5000)
+    return () => clearInterval(timer)
+  }, [fetchWarnings])
 
   const level1Warnings = warnings.filter(w => w.level === 'level1')
   const level2Warnings = warnings.filter(w => w.level === 'level2')
@@ -91,42 +111,29 @@ const Warnings = () => {
     setDetailOpen(true)
   }
 
-  const respondToWarning = (id: string) => {
-    setWarnings(prev =>
-      prev.map(w =>
-        w.id === id
-          ? {
-              ...w,
-              level: 'resolved',
-              respondedAt: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-              resolvedAt: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-            }
-          : w,
-      ),
-    )
-    message.success('预警已响应并解除')
-    setDetailOpen(false)
+  const respondToWarning = async (id: string) => {
+    try {
+      const res = await warningsApi.respond(id)
+      if (res.success) {
+        setWarnings(prev => prev.map(w => (w.id === id ? res.warning : w)))
+        message.success('预警已响应并解除')
+        setDetailOpen(false)
+      }
+    } catch (err: any) {
+      message.error(err.message || '响应预警失败')
+    }
   }
 
-  const escalateWarning = (id: string) => {
-    setWarnings(prev =>
-      prev.map(w =>
-        w.id === id
-          ? {
-              ...w,
-              level: 'level2',
-              escalationCount: w.escalationCount + 1,
-              approvalStatus: 'pending',
-              approvals: [
-                { level: 1, role: '安全主管', approver: '', status: 'pending' },
-                { level: 2, role: '运输经理', approver: '', status: 'pending' },
-                { level: 3, role: '企业法人', approver: '', status: 'pending' },
-              ],
-            }
-          : w,
-      ),
-    )
-    message.warning('预警已升级为二级，启动三级审批流程')
+  const escalateWarning = async (id: string) => {
+    try {
+      const res = await warningsApi.escalate(id)
+      if (res.success) {
+        setWarnings(prev => prev.map(w => (w.id === id ? res.warning : w)))
+        message.warning('预警已升级为二级，启动三级审批流程')
+      }
+    } catch (err: any) {
+      message.error(err.message || '升级预警失败')
+    }
   }
 
   const openApproval = (w: Warning, level: number) => {
@@ -138,30 +145,29 @@ const Warnings = () => {
 
   const submitApproval = async () => {
     if (!selected) return
-    const values = await approvalForm.validateFields()
-    setWarnings(prev =>
-      prev.map(w => {
-        if (w.id !== selected.id) return w
-        const approvals = [...w.approvals]
-        approvals[currentApprovalLevel - 1] = {
-          level: currentApprovalLevel,
-          role: approvals[currentApprovalLevel - 1].role,
-          approver: values.status === 'approved' ? '当前审批人' : '当前审批人',
-          status: values.status,
-          comment: values.comment,
-          time: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-        }
-        const allApproved = approvals.every(a => a.status === 'approved')
-        return {
-          ...w,
-          approvals,
-          interventionEnabled: allApproved,
-          approvalStatus: values.status === 'rejected' ? 'rejected' : allApproved ? 'approved' : 'pending',
-        }
-      }),
-    )
-    message.success(values.status === 'approved' ? '审批通过' : '已驳回')
-    setApprovalOpen(false)
+    try {
+      const values = await approvalForm.validateFields()
+      const res = await warningsApi.approve(selected.id, currentApprovalLevel, values.status, values.comment)
+      if (res.success) {
+        setWarnings(prev => prev.map(w => (w.id === selected.id ? res.warning : w)))
+        message.success(values.status === 'approved' ? '审批通过' : '已驳回')
+        setApprovalOpen(false)
+      }
+    } catch (err: any) {
+      message.error(err.message || '提交审批失败')
+    }
+  }
+
+  const intervene = async (id: string) => {
+    try {
+      const res = await warningsApi.intervene(id)
+      if (res.success) {
+        message.success(res.message || '远程干预指令已下发')
+        fetchWarnings()
+      }
+    } catch (err: any) {
+      message.error(err.message || '远程干预失败')
+    }
   }
 
   const WarningCard = ({ w }: { w: Warning }) => {
@@ -245,7 +251,7 @@ const Warnings = () => {
                 </>
               )}
               {w.interventionEnabled && (
-                <Button type="primary" size="small" danger icon={<RocketOutlined />} onClick={e => { e.stopPropagation(); message.success('远程干预指令已下发') }}>
+                <Button type="primary" size="small" danger icon={<RocketOutlined />} onClick={e => { e.stopPropagation(); intervene(w.id) }}>
                   执行远程干预
                 </Button>
               )}
@@ -521,8 +527,6 @@ const Warnings = () => {
     </div>
   )
 }
-
-import { Alert } from 'antd'
 
 const AlertHistoryMock = () => {
   const history = [

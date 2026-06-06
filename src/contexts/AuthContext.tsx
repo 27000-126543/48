@@ -1,10 +1,12 @@
-import { createContext, useContext, useState, useCallback, ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react'
 import type { User, UserRole } from '@/types'
-import { mockUsers } from '@/data/mock'
+import { authApi, setToken, clearToken, setStoredUser, getStoredUser } from '@/api/client'
+import { message } from 'antd'
 
 interface AuthContextType {
   user: User | null
-  login: (role: UserRole) => void
+  loading: boolean
+  login: (username: string, password: string) => Promise<void>
   logout: () => void
   canAccess: (requiredRole: UserRole[]) => boolean
 }
@@ -12,14 +14,26 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | null>(null)
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [user, setUser] = useState<User | null>(mockUsers[0])
+  const [user, setUser] = useState<User | null>(() => getStoredUser())
+  const [loading, setLoading] = useState(false)
 
-  const login = useCallback((role: UserRole) => {
-    const found = mockUsers.find(u => u.role === role)
-    if (found) setUser(found)
+  const login = useCallback(async (username: string, password: string) => {
+    setLoading(true)
+    try {
+      const res = await authApi.login(username, password)
+      setToken(res.token)
+      setStoredUser(res.user)
+      setUser(res.user)
+      message.success(`登录成功，欢迎 ${res.user.name}`)
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
-  const logout = useCallback(() => setUser(null), [])
+  const logout = useCallback(() => {
+    clearToken()
+    setUser(null)
+  }, [])
 
   const canAccess = useCallback((requiredRole: UserRole[]) => {
     if (!user) return false
@@ -28,8 +42,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return requiredRole.some(r => hierarchy.indexOf(r) >= userIndex)
   }, [user])
 
+  useEffect(() => {
+    const t = getStoredUser()
+    if (t && !user) setUser(t)
+  }, [user])
+
   return (
-    <AuthContext.Provider value={{ user, login, logout, canAccess }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, canAccess }}>
       {children}
     </AuthContext.Provider>
   )

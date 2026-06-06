@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Table,
   Tag,
@@ -21,7 +21,7 @@ import {
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import type { ColumnsType } from 'antd/es/table'
-import { mockVehicles } from '@/data/mock'
+import { vehiclesApi } from '@/api/client'
 import type { Vehicle, VehicleStatus } from '@/types'
 
 const { Text } = Typography
@@ -44,8 +44,27 @@ const Vehicles = () => {
   const [keyword, setKeyword] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [loading, setLoading] = useState(false)
+  const [vehicles, setVehicles] = useState<Vehicle[]>([])
 
-  const filtered = mockVehicles.filter(v => {
+  const fetchVehicles = async () => {
+    setLoading(true)
+    try {
+      const response = await vehiclesApi.list()
+      setVehicles(response.items)
+    } catch (error) {
+      console.error('Failed to fetch vehicles:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchVehicles()
+    const interval = setInterval(fetchVehicles, 5000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const filtered = vehicles.filter(v => {
     const matchKeyword =
       !keyword ||
       v.plateNumber.toLowerCase().includes(keyword.toLowerCase()) ||
@@ -250,8 +269,7 @@ const Vehicles = () => {
   ]
 
   const handleRefresh = () => {
-    setLoading(true)
-    setTimeout(() => setLoading(false), 800)
+    fetchVehicles()
   }
 
   return (
@@ -278,7 +296,7 @@ const Vehicles = () => {
             <Option value="danger">危险</Option>
             <Option value="offline">离线</Option>
           </Select>
-          <Button icon={<ReloadOutlined />} onClick={handleRefresh}>刷新</Button>
+          <Button icon={<ReloadOutlined />} onClick={handleRefresh} loading={loading}>刷新</Button>
           <Space className="ml-auto">
             <Tag icon={<CarOutlined />} color="blue">共 {filtered.length} 辆车</Tag>
           </Space>
